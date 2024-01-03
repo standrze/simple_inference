@@ -1,19 +1,29 @@
 import torch
 import gradio
 from threading import Thread
-from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
+from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer, MistralModel, MistralConfig, BitsAndBytesConfig
 
 
 model_name = "mistralai/Mistral-7B-Instruct-v0.2"
 torch_dtype = torch.bfloat16  # Set the appropriate torch data type
-device = "cuda"
+device = "cuda:0"
 
 model = AutoModelForCausalLM.from_pretrained(
     pretrained_model_name_or_path=model_name,
     trust_remote_code=True,
     device_map=device,
-    torch_dtype=torch_dtype,
+    sliding_window=8192,
+    attn_implementation="flash_attention_2",
+    quantization_config=BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch_dtype,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type='nf4'
+    ),
+    torch_dtype=torch_dtype
 )
+
+#<s>{{#each messages}}{{#ifUser}}[INST] {{#if @first}}{{#if @root.preprompt}}{{@root.preprompt}}\n{{/if}}{{/if}} {{content}} [/INST]{{/ifUser}}{{#ifAssistant}}{{content}}</s> {{/ifAssistant}}{{/each}}
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, device_map=device, trust_remote_code=True)
 tokenizer.add_special_tokens({'pad_token': '[PAD]'})
@@ -25,7 +35,7 @@ def run_generation(user_text, top_p, temperature, top_k, max_new_tokens):
     model_inputs = model_inputs.to(device)
 
     # Generate text in a separate thread
-    streamer = TextIteratorStreamer(tokenizer, timeout=10., skip_prompt=False, skip_special_tokens=False)
+    streamer = TextIteratorStreamer(tokenizer, timeout=10., skip_prompt=True, skip_special_tokens=True)
 
     generate_kwargs = dict(
         model_inputs,
